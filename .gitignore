@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 raw_demos/
 data/
+data/ur7e_first/data/
 *.mp4
 *.avi
 *.hdf5
