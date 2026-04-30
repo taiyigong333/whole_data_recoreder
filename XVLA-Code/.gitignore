@@ -1,0 +1,32 @@
+# 模型权重
+*.pt
+*.bin
+*.safetensors
+X-VLA-Pt/
+X-VLA-Libero/
+
+# 视频
+*.mp4
+*.avi
+
+# 采集数据
+*.hdf5
+*.npz
+raw_demos/
+training_data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+env/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db

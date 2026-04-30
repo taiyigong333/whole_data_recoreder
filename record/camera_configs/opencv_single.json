@@ -1,0 +1,9 @@
+{
+  "cameras": [
+    {
+      "name": "front",
+      "type": "opencv",
+      "device": 0
+    }
+  ]
+}

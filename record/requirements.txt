@@ -1,0 +1,16 @@
+# Extra Python dependencies for the UR7e recorder under `record/`.
+#
+# Install LeRobot itself first:
+#   python -m pip install -e ./lerobot-0.3.3
+#
+# Then install this file:
+#   python -m pip install -r record/requirements.txt
+#
+# Notes:
+# - `ffmpeg` must be available on PATH. On conda, prefer:
+#     conda install -n lerobot -c conda-forge ffmpeg
+# - LeRobot installs `opencv-python-headless` by default. The recorder uses
+#   `cv2.imshow`, so this file upgrades to the GUI-enabled `opencv-python`.
+# - Optional RealSense support lives in `record/requirements-realsense.txt`.
+ur-rtde>=1.6.0
+opencv-python>=4.9.0

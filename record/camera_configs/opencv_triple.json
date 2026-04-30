@@ -1,0 +1,19 @@
+{
+  "cameras": [
+    {
+      "name": "front",
+      "type": "opencv",
+      "device": 0
+    },
+    {
+      "name": "left_arm",
+      "type": "opencv",
+      "device": 1
+    },
+    {
+      "name": "right_arm",
+      "type": "opencv",
+      "device": 2
+    }
+  ]
+}

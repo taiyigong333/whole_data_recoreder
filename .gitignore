@@ -1,0 +1,15 @@
+.DS_Store
+.codex
+__pycache__/
+*.py[cod]
+raw_demos/
+data/
+*.mp4
+*.avi
+*.hdf5
+*.npz
+*.pt
+*.bin
+*.safetensors
+*:Zone.Identifier
+ur7e_lerobot_v21_local_recording/output/

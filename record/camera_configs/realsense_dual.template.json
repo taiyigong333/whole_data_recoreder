@@ -1,0 +1,14 @@
+{
+  "cameras": [
+    {
+      "name": "front",
+      "type": "intelrealsense",
+      "device": "012345678901"
+    },
+    {
+      "name": "wrist",
+      "type": "opencv",
+      "device": 0
+    }
+  ]
+}

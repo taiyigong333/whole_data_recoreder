@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Optional Python dependency for Intel RealSense cameras.
+#
+# Linux users can usually install it from pip with the marker below.
+# On macOS arm64, prefer:
+#   conda install -n lerobot -c conda-forge pyrealsense2
+pyrealsense2>=2.55.1.6486 ; sys_platform != "darwin"
