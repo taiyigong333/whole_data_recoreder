@@ -2,10 +2,17 @@
 
 `quality_test/validate_dataset.py` 是这个仓库统一的数据校验入口，支持两种数据格式：
 
+- `raw_demos/*.npz`
 - `XVAL-Code` 风格的 HDF5 数据
 - `LeRobot Dataset v2.1`
 
 它的目标是在训练、上传或继续转换之前，尽量提前发现数据问题。
+
+另外还提供了一个可视化脚本：
+
+- `quality_test/plot_gripper_trajectories.py`
+
+它会把一个数据集中每条轨迹的夹爪数据画成一条条线，颜色表示夹爪开闭状态，并且可以通过 `--output` 指定生成位置。
 
 ## 校验内容
 
@@ -56,6 +63,16 @@
 - 前 6 个 joint 维度如果全为 0，会给出警告
 - `language_instruction` 缺失或为空时给出警告
 
+对 `raw_demos/*.npz`，还会检查：
+
+- 是否包含 `images`、`tcp_poses`、`gripper`、`instruction`、`fps`
+- `images` 是否是 `(T, H, W, 3)`
+- `tcp_poses` 是否是 `(T, 6)`
+- `gripper` 是否是一维数组
+- `images`、`tcp_poses`、`gripper`、`images_wrist` 的帧数是否一致
+- 所有 raw demo 的分辨率、fps、是否带腕部相机是否一致
+- `tcp_poses` 和 `gripper` 的最小值、最大值
+
 ## 依赖
 
 推荐环境：
@@ -75,6 +92,10 @@ python -m pip install -r quality_test/requirements.txt
 
 - `h5py`
 
+如果你还要画夹爪轨迹图，还需要：
+
+- `matplotlib`
+
 ## 用法
 
 ### 自动识别数据格式
@@ -84,7 +105,19 @@ python quality_test/validate_dataset.py data/ur7e_first
 ```
 
 ```bash
+python quality_test/validate_dataset.py raw_demos
+```
+
+```bash
 python quality_test/validate_dataset.py XVLA-Code/training_data
+```
+
+### 强制按 raw_demos 校验
+
+```bash
+python quality_test/validate_dataset.py \
+  raw_demos \
+  --format raw_demos_npz
 ```
 
 ### 强制按 LeRobot v2.1 校验
@@ -118,6 +151,48 @@ python quality_test/validate_dataset.py \
   data/ur7e_first \
   --strict
 ```
+
+## 夹爪轨迹绘图
+
+### 自动识别格式并输出图片
+
+```bash
+python quality_test/plot_gripper_trajectories.py \
+  raw_demos \
+  --output quality_test/reports/raw_demos_gripper.png
+```
+
+```bash
+python quality_test/plot_gripper_trajectories.py \
+  data/ur7e_first \
+  --output quality_test/reports/ur7e_first_gripper.png
+```
+
+### 指定 XVAL HDF5 目录
+
+```bash
+python quality_test/plot_gripper_trajectories.py \
+  XVLA-Code/training_data \
+  --format xval_hdf5 \
+  --output quality_test/reports/xval_gripper.png
+```
+
+### 自定义标题和分辨率
+
+```bash
+python quality_test/plot_gripper_trajectories.py \
+  data/ur7e_first \
+  --output quality_test/reports/ur7e_first_gripper.png \
+  --title "UR7e gripper trajectories" \
+  --dpi 220
+```
+
+图像含义：
+
+- 每条轨迹对应图中的一行
+- 横轴是帧序号
+- 颜色表示夹爪值，默认采用红到绿的渐变
+- 线条上下轻微起伏，用来帮助区分夹爪数值变化
 
 ## 输出说明
 

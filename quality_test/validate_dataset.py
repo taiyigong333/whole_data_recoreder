@@ -40,6 +40,13 @@ LEROBOT_META_FILES = (
     "meta/episodes_stats.jsonl",
     "meta/tasks.jsonl",
 )
+RAW_DEMO_REQUIRED_KEYS = (
+    "images",
+    "tcp_poses",
+    "gripper",
+    "instruction",
+    "fps",
+)
 DEFAULT_GRIPPER_NAMES = {"gripper", "gripper_position", "grip", "grip_pos"}
 DEFAULT_JOINT_PREFIXES = ("joint", "shoulder", "elbow", "wrist")
 
@@ -124,7 +131,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("path", type=Path, help="Dataset directory or single HDF5 file.")
     parser.add_argument(
         "--format",
-        choices=("auto", "lerobot_v21", "xval_hdf5"),
+        choices=("auto", "raw_demos_npz", "lerobot_v21", "xval_hdf5"),
         default="auto",
         help="Dataset format. Default: auto",
     )
@@ -142,14 +149,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _require_numpy() -> None:
+def require_numpy() -> None:
     if np is None:  # pragma: no cover - runtime dependency
         raise SystemExit(
             "Missing dependency: numpy. Install it before running this validator."
         ) from _NUMPY_IMPORT_ERROR
 
 
-def _require_pyarrow(report: ValidationReport) -> bool:
+def require_pyarrow(report: ValidationReport) -> bool:
     if pa is None or pq is None:  # pragma: no cover - runtime dependency
         report.add_error(
             "Missing dependency: pyarrow. Install it before validating a LeRobot v2.1 dataset."
@@ -158,7 +165,7 @@ def _require_pyarrow(report: ValidationReport) -> bool:
     return True
 
 
-def _require_h5py(report: ValidationReport) -> bool:
+def require_h5py(report: ValidationReport) -> bool:
     if h5py is None:  # pragma: no cover - runtime dependency
         report.add_error(
             "Missing dependency: h5py. Install it before validating an XVAL-Code HDF5 dataset."
@@ -202,18 +209,21 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _detect_format(path: Path) -> str:
+def detect_format(path: Path) -> str:
     if path.is_file() and path.suffix.lower() in {".hdf5", ".h5"}:
         return "xval_hdf5"
     if path.is_dir() and all((path / meta_file).exists() for meta_file in LEROBOT_META_FILES):
         return "lerobot_v21"
     if path.is_dir():
+        npz_files = sorted(path.glob("episode_*.npz"))
+        if npz_files:
+            return "raw_demos_npz"
         hdf5_files = sorted(path.glob("*.hdf5")) + sorted(path.glob("*.h5"))
         if hdf5_files:
             return "xval_hdf5"
     raise SystemExit(
         "Unable to detect dataset format. Pass --format explicitly or provide a valid "
-        "LeRobot v2.1 dataset directory / XVAL-Code HDF5 file or directory."
+        "raw_demos directory / LeRobot v2.1 dataset directory / XVAL-Code HDF5 file or directory."
     )
 
 
@@ -273,7 +283,7 @@ def _arrow_array_to_numpy(array):
     return np.asarray(array.to_numpy(zero_copy_only=False))
 
 
-def _feature_dimension_names(feature: dict[str, Any], fallback_prefix: str) -> list[str]:
+def feature_dimension_names(feature: dict[str, Any], fallback_prefix: str) -> list[str]:
     names = feature.get("names")
     if isinstance(names, list) and names:
         return [str(name) for name in names]
@@ -283,7 +293,7 @@ def _feature_dimension_names(feature: dict[str, Any], fallback_prefix: str) -> l
     return [fallback_prefix]
 
 
-def _find_gripper_index(names: list[str]) -> int | None:
+def find_gripper_index(names: list[str]) -> int | None:
     for idx, name in enumerate(names):
         if str(name).lower() in DEFAULT_GRIPPER_NAMES:
             return idx
@@ -316,10 +326,169 @@ def _validate_numeric_array(
     return array
 
 
+def collect_raw_demo_files(path: Path) -> list[Path]:
+    if path.is_file():
+        if path.suffix.lower() != ".npz":
+            return []
+        return [path]
+    return sorted(path.glob("episode_*.npz"))
+
+
+def validate_raw_demos_npz(path: Path) -> ValidationReport:
+    require_numpy()
+    report = ValidationReport(dataset_format="raw_demos_npz", root=path)
+
+    raw_demo_files = collect_raw_demo_files(path)
+    if not raw_demo_files:
+        report.add_error(f"No raw demo npz files were found under {path}.")
+        return report
+
+    tcp_names = ["tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz"]
+    tcp_ranges = VectorRangeAccumulator(tcp_names)
+    gripper_range = VectorRangeAccumulator(["gripper"])
+
+    fps_values: set[int] = set()
+    instructions: set[str] = set()
+    main_shapes: set[tuple[int, int, int]] = set()
+    wrist_shapes: set[tuple[int, int, int]] = set()
+    has_wrist_values: set[bool] = set()
+
+    total_frames = 0
+    min_length = None
+    max_length = None
+
+    for npz_path in raw_demo_files:
+        with np.load(npz_path, allow_pickle=True) as data:
+            data_files = list(data.files)
+            missing_keys = [key for key in RAW_DEMO_REQUIRED_KEYS if key not in data_files]
+            if missing_keys:
+                report.add_error(f"{npz_path}: missing required keys {missing_keys}.")
+                continue
+
+            images = np.asarray(data["images"])
+            tcp_poses = np.asarray(data["tcp_poses"])
+            gripper = np.asarray(data["gripper"])
+            instruction = str(np.asarray(data["instruction"]).item())
+            fps = int(np.asarray(data["fps"]).item())
+            images_wrist = np.asarray(data["images_wrist"]) if "images_wrist" in data_files else None
+
+            _validate_numeric_array(
+                array=tcp_poses,
+                label=f"{npz_path}: tcp_poses",
+                report=report,
+            )
+            _validate_numeric_array(
+                array=gripper,
+                label=f"{npz_path}: gripper",
+                report=report,
+            )
+
+            if images.ndim != 4 or images.shape[-1] != 3:
+                report.add_error(
+                    f"{npz_path}: images must have shape (T, H, W, 3), got {images.shape}."
+                )
+                continue
+            if images.dtype != np.uint8:
+                report.add_warning(
+                    f"{npz_path}: images dtype is {images.dtype}, expected uint8."
+                )
+            if images.min() < 0 or images.max() > 255:
+                report.add_warning(
+                    f"{npz_path}: images values fall outside the common [0, 255] range."
+                )
+
+            if tcp_poses.ndim != 2 or tcp_poses.shape[1] != 6:
+                report.add_error(
+                    f"{npz_path}: tcp_poses must have shape (T, 6), got {tcp_poses.shape}."
+                )
+                continue
+            if gripper.ndim != 1:
+                report.add_error(f"{npz_path}: gripper must be a 1D array, got {gripper.shape}.")
+                continue
+
+            frame_count = int(images.shape[0])
+            total_frames += frame_count
+            min_length = frame_count if min_length is None else min(min_length, frame_count)
+            max_length = frame_count if max_length is None else max(max_length, frame_count)
+
+            if frame_count <= 0:
+                report.add_error(f"{npz_path}: empty trajectory.")
+                continue
+            if tcp_poses.shape[0] != frame_count:
+                report.add_error(
+                    f"{npz_path}: frame count mismatch between images ({frame_count}) "
+                    f"and tcp_poses ({tcp_poses.shape[0]})."
+                )
+            if gripper.shape[0] != frame_count:
+                report.add_error(
+                    f"{npz_path}: frame count mismatch between images ({frame_count}) "
+                    f"and gripper ({gripper.shape[0]})."
+                )
+
+            if images_wrist is not None:
+                if images_wrist.ndim != 4 or images_wrist.shape[-1] != 3:
+                    report.add_error(
+                        f"{npz_path}: images_wrist must have shape (T, H, W, 3), got {images_wrist.shape}."
+                    )
+                elif images_wrist.shape[0] != frame_count:
+                    report.add_error(
+                        f"{npz_path}: frame count mismatch between images ({frame_count}) "
+                        f"and images_wrist ({images_wrist.shape[0]})."
+                    )
+                wrist_shapes.add(tuple(int(value) for value in images_wrist.shape[1:]))
+
+            main_shapes.add(tuple(int(value) for value in images.shape[1:]))
+            has_wrist_values.add(images_wrist is not None)
+            fps_values.add(fps)
+            instructions.add(instruction)
+
+            tcp_ranges.update(tcp_poses)
+            gripper_range.update(gripper)
+
+            if np.allclose(gripper, gripper[0], atol=1e-8):
+                report.add_warning(
+                    f"{npz_path}: gripper value is constant ({float(gripper[0])})."
+                )
+            if gripper.min() < 0.0 or gripper.max() > 1.0:
+                report.add_warning(
+                    f"{npz_path}: gripper values fall outside the common [0, 1] range."
+                )
+            if not instruction.strip():
+                report.add_warning(f"{npz_path}: instruction is empty.")
+            if fps <= 0:
+                report.add_error(f"{npz_path}: fps must be positive, got {fps}.")
+
+    if len(main_shapes) > 1:
+        report.add_error(f"images resolution mismatch across raw demos: {sorted(main_shapes)}.")
+    if len(wrist_shapes) > 1:
+        report.add_error(
+            f"images_wrist resolution mismatch across raw demos: {sorted(wrist_shapes)}."
+        )
+    if len(has_wrist_values) > 1:
+        report.add_error("Some raw demos contain images_wrist while others do not.")
+    if len(fps_values) > 1:
+        report.add_error(f"fps mismatch across raw demos: {sorted(fps_values)}.")
+
+    report.ranges["tcp_poses"] = tcp_ranges.to_named_dict()
+    report.ranges["gripper_position"] = gripper_range.to_named_dict()
+    report.summary = {
+        "episodes": len(raw_demo_files),
+        "frames": total_frames,
+        "fps_values": sorted(fps_values),
+        "instructions": sorted(instructions),
+        "has_wrist_camera": sorted(has_wrist_values),
+        "main_image_shapes": sorted(main_shapes),
+        "wrist_image_shapes": sorted(wrist_shapes),
+        "min_length": min_length,
+        "max_length": max_length,
+    }
+    return report
+
+
 def validate_lerobot_v21(root: Path) -> ValidationReport:
-    _require_numpy()
+    require_numpy()
     report = ValidationReport(dataset_format="lerobot_v21", root=root)
-    if not _require_pyarrow(report):
+    if not require_pyarrow(report):
         return report
 
     for meta_file in LEROBOT_META_FILES:
@@ -360,12 +529,12 @@ def validate_lerobot_v21(root: Path) -> ValidationReport:
         report.add_error("meta/info.json: missing action feature.")
         return report
 
-    state_names = _feature_dimension_names(state_feature, "state")
-    action_names = _feature_dimension_names(action_feature, "action")
+    state_names = feature_dimension_names(state_feature, "state")
+    action_names = feature_dimension_names(action_feature, "action")
     state_ranges = VectorRangeAccumulator(state_names)
     action_ranges = VectorRangeAccumulator(action_names)
 
-    gripper_index = _find_gripper_index(state_names)
+    gripper_index = find_gripper_index(state_names)
     joint_indices = _find_joint_indices(state_names)
     gripper_range = VectorRangeAccumulator(["gripper"]) if gripper_index is not None else None
     joint_range = (
@@ -657,7 +826,7 @@ def validate_lerobot_v21(root: Path) -> ValidationReport:
     return report
 
 
-def _collect_hdf5_files(path: Path) -> list[Path]:
+def collect_hdf5_files(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
     files = sorted(path.glob("*.hdf5")) + sorted(path.glob("*.h5"))
@@ -669,12 +838,12 @@ def _hdf5_dataset_exists(handle, dataset_path: str) -> bool:
 
 
 def validate_xval_hdf5(path: Path) -> ValidationReport:
-    _require_numpy()
+    require_numpy()
     report = ValidationReport(dataset_format="xval_hdf5", root=path)
-    if not _require_h5py(report):
+    if not require_h5py(report):
         return report
 
-    hdf5_files = _collect_hdf5_files(path)
+    hdf5_files = collect_hdf5_files(path)
     if not hdf5_files:
         report.add_error(f"No HDF5 files were found under {path}.")
         return report
@@ -823,10 +992,12 @@ def main() -> None:
 
     dataset_format = args.format
     if dataset_format == "auto":
-        dataset_format = _detect_format(target_path)
+        dataset_format = detect_format(target_path)
 
     if dataset_format == "lerobot_v21":
         report = validate_lerobot_v21(target_path)
+    elif dataset_format == "raw_demos_npz":
+        report = validate_raw_demos_npz(target_path)
     elif dataset_format == "xval_hdf5":
         report = validate_xval_hdf5(target_path)
     else:  # pragma: no cover - argparse prevents this
