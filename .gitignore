@@ -14,3 +14,4 @@ data/ur7e_first/data/
 *.safetensors
 *:Zone.Identifier
 ur7e_lerobot_v21_local_recording/output/
+quality_test/reports/
