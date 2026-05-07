@@ -712,8 +712,8 @@ source /home/taiyi/miniconda3/etc/profile.d/conda.sh
 conda activate lerobot
 
 python record/collect_ur7e_multicam_lerobot_v21.py convert \
-  --raw-dir ./raw_demos \
-  --root ./data/ur7e_first \
+  --raw-dir ./only_cheer \
+  --root ./data/ur7e_only \
   --repo-id local/ur7e_raw_demos_v21 \
   --main-width 128 \
   --main-height 128 \
