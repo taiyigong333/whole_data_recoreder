@@ -69,6 +69,13 @@ python record/collect_ur7e_multicam_lerobot_v21.py convert \
   --repo-id local/ur7e_first
 ```
 
+这条离线转换固定按 `TCP + gripper` 写入 `LeRobot Dataset v2.1`：
+
+- `observation.state = tcp[t] + gripper[t]`
+- `action = tcp[t+1] + gripper[t+1]`
+
+不是关节角数据。
+
 将 `npz` 转为 XVAL HDF5：
 
 ```bash
@@ -82,6 +89,23 @@ python XVLA-Code/data_fetch/convert_to_hdf5.py
 ```bash
 python quality_test/validate_dataset.py data/ur7e_first
 ```
+
+要核对 `raw_demos -> LeRobot v2.1` 的 `TCP` 和夹爪是否一一对齐，建议再跑：
+
+```bash
+HF_HOME=/tmp/hf_home_validate \
+HF_DATASETS_CACHE=/tmp/hf_datasets_validate \
+python record/validate_converted_lerobot_v21.py \
+  --root data/ur7e_first \
+  --raw-dir ./raw_demos \
+  --video-backend pyav
+```
+
+它会直接展示：
+
+- 原始和转换后的 `TCP`
+- 原始和转换后的夹爪值
+- 每个抽样 episode 的最大绝对误差
 
 校验 XVAL HDF5：
 
@@ -120,5 +144,5 @@ python -m pip install -r quality_test/requirements.txt
 ## 备注
 
 - LeRobot 这条链路请保持在 `LeRobot Dataset v2.1`
-- 这个仓库中的部分 LeRobot 数据集保存的是 `tcp pose + gripper`，不是完整 joint angle
-- 遇到这种数据集时，校验器会正常输出 gripper 范围，并明确提示当前 schema 不包含 joint position 维度
+- 这个仓库中的 `raw_demos -> LeRobot` 离线转换保存的是 `tcp pose + gripper`，不是完整 joint angle
+- `record/validate_converted_lerobot_v21.py` 会直接比对转换前后的 `TCP` 和夹爪值，并输出结果摘要
