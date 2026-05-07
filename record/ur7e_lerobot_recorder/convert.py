@@ -9,6 +9,7 @@ import numpy as np
 
 from .config import CameraSpec
 from .dataset import (
+    JOINT_NAMES,
     CONVERT_ACTION_NAMES,
     CONVERT_STATE_NAMES,
     create_or_resume_dataset,
@@ -25,6 +26,7 @@ WRIST_CAMERA_NAME = "cam_wrist"
 class RawDemoConfig:
     fps: int
     has_wrist: bool
+    has_joint_positions: bool
     main_shape: tuple[int, int, int]
     wrist_shape: tuple[int, int, int] | None
 
@@ -78,6 +80,41 @@ def _load_single_raw_demo(npz_path: Path) -> dict[str, Any]:
     return payload
 
 
+def _has_joint_positions(payload: dict[str, Any]) -> bool:
+    return "joint_positions" in payload
+
+
+def get_convert_state_names() -> list[str]:
+    return list(CONVERT_STATE_NAMES)
+
+
+def get_convert_action_names() -> list[str]:
+    return list(CONVERT_ACTION_NAMES)
+
+
+def _build_state_from_payload(payload: dict[str, Any], index: int) -> np.ndarray:
+    tcp_poses = np.asarray(payload["tcp_poses"], dtype=np.float32)
+    gripper = np.asarray(payload["gripper"], dtype=np.float32)
+
+    return np.concatenate(
+        [
+            tcp_poses[index].astype(np.float32, copy=False),
+            np.asarray([gripper[index]], dtype=np.float32),
+        ]
+    )
+
+
+def _build_action_from_payload(payload: dict[str, Any], index: int) -> np.ndarray:
+    tcp_poses = np.asarray(payload["tcp_poses"], dtype=np.float32)
+    gripper = np.asarray(payload["gripper"], dtype=np.float32)
+    return np.concatenate(
+        [
+            tcp_poses[index + 1].astype(np.float32, copy=False),
+            np.asarray([gripper[index + 1]], dtype=np.float32),
+        ]
+    )
+
+
 def inspect_raw_demos(raw_dir: Path) -> tuple[list[Path], RawDemoConfig]:
     npz_files = sorted(raw_dir.glob("episode_*.npz"))
     if not npz_files:
@@ -85,6 +122,7 @@ def inspect_raw_demos(raw_dir: Path) -> tuple[list[Path], RawDemoConfig]:
 
     fps: int | None = None
     has_wrist: bool | None = None
+    has_joint_positions: bool | None = None
     main_shape: tuple[int, int, int] | None = None
     wrist_shape: tuple[int, int, int] | None = None
 
@@ -97,6 +135,7 @@ def inspect_raw_demos(raw_dir: Path) -> tuple[list[Path], RawDemoConfig]:
 
         current_fps = int(np.asarray(payload["fps"]).item())
         current_has_wrist = "images_wrist" in payload
+        current_has_joint_positions = _has_joint_positions(payload)
         current_main_shape = tuple(int(x) for x in payload["images"].shape[1:])
         current_wrist_shape = (
             tuple(int(x) for x in payload["images_wrist"].shape[1:]) if current_has_wrist else None
@@ -110,6 +149,13 @@ def inspect_raw_demos(raw_dir: Path) -> tuple[list[Path], RawDemoConfig]:
             raise SystemExit(f"`gripper` 必须是一维数组: {npz_path}")
         if payload["images"].shape[0] != payload["tcp_poses"].shape[0] or payload["images"].shape[0] != payload["gripper"].shape[0]:
             raise SystemExit(f"`images`/`tcp_poses`/`gripper` 的长度不一致: {npz_path}")
+        if current_has_joint_positions:
+            if payload["joint_positions"].ndim != 2 or payload["joint_positions"].shape[1] != len(JOINT_NAMES):
+                raise SystemExit(
+                    f"`joint_positions` 必须是形状 (T, {len(JOINT_NAMES)}): {npz_path}"
+                )
+            if payload["joint_positions"].shape[0] != payload["images"].shape[0]:
+                raise SystemExit(f"`joint_positions` 与 `images` 的帧数不一致: {npz_path}")
         if current_has_wrist:
             if payload["images_wrist"].ndim != 4 or current_wrist_shape is None or current_wrist_shape[-1] != 3:
                 raise SystemExit(f"`images_wrist` 不是合法的 RGB 视频数组: {npz_path}")
@@ -131,6 +177,14 @@ def inspect_raw_demos(raw_dir: Path) -> tuple[list[Path], RawDemoConfig]:
                 "请先整理原始数据，避免单/双相机混用。"
             )
 
+        if has_joint_positions is None:
+            has_joint_positions = current_has_joint_positions
+        elif has_joint_positions != current_has_joint_positions:
+            raise SystemExit(
+                "存在部分 episode 带 `joint_positions`、部分不带的情况。"
+                "请先整理原始数据，避免旧版/新版 raw_demos 混用。"
+            )
+
         if main_shape is None:
             main_shape = current_main_shape
         if current_main_shape != main_shape:
@@ -148,10 +202,12 @@ def inspect_raw_demos(raw_dir: Path) -> tuple[list[Path], RawDemoConfig]:
 
     assert fps is not None
     assert has_wrist is not None
+    assert has_joint_positions is not None
     assert main_shape is not None
     return npz_files, RawDemoConfig(
         fps=fps,
         has_wrist=has_wrist,
+        has_joint_positions=has_joint_positions,
         main_shape=main_shape,
         wrist_shape=wrist_shape,
     )
@@ -163,6 +219,8 @@ def _manifest_payload(
     raw_dir: Path,
     config: RawDemoConfig,
     camera_specs: Sequence[CameraSpec],
+    state_names: Sequence[str],
+    action_names: Sequence[str],
     converted_episodes: dict[str, int],
 ) -> dict[str, Any]:
     return {
@@ -171,8 +229,9 @@ def _manifest_payload(
         "robot_type": args.robot_type,
         "fps": config.fps,
         "has_wrist": config.has_wrist,
-        "state_names": list(CONVERT_STATE_NAMES),
-        "action_names": list(CONVERT_ACTION_NAMES),
+        "has_joint_positions": config.has_joint_positions,
+        "state_names": list(state_names),
+        "action_names": list(action_names),
         "raw_main_shape": list(config.main_shape),
         "raw_wrist_shape": list(config.wrist_shape) if config.wrist_shape is not None else None,
         "camera_specs": [
@@ -202,12 +261,16 @@ def _validate_manifest(
     raw_dir: Path,
     config: RawDemoConfig,
     camera_specs: Sequence[CameraSpec],
+    state_names: Sequence[str],
+    action_names: Sequence[str],
 ) -> dict[str, int]:
     expected = _manifest_payload(
         args=args,
         raw_dir=raw_dir,
         config=config,
         camera_specs=camera_specs,
+        state_names=state_names,
+        action_names=action_names,
         converted_episodes=manifest.get("converted_episodes", {}),
     )
     comparable_keys = [
@@ -216,6 +279,7 @@ def _validate_manifest(
         "robot_type",
         "fps",
         "has_wrist",
+        "has_joint_positions",
         "state_names",
         "action_names",
         "raw_main_shape",
@@ -241,6 +305,8 @@ def save_manifest(
     raw_dir: Path,
     config: RawDemoConfig,
     camera_specs: Sequence[CameraSpec],
+    state_names: Sequence[str],
+    action_names: Sequence[str],
     converted_episodes: dict[str, int],
 ) -> None:
     payload = _manifest_payload(
@@ -248,6 +314,8 @@ def save_manifest(
         raw_dir=raw_dir,
         config=config,
         camera_specs=camera_specs,
+        state_names=state_names,
+        action_names=action_names,
         converted_episodes=converted_episodes,
     )
     manifest_path = conversion_manifest_path(root)
@@ -257,7 +325,14 @@ def save_manifest(
         handle.write("\n")
 
 
-def _load_or_create_dataset(args, config: RawDemoConfig, camera_specs: Sequence[CameraSpec]):
+def _load_or_create_dataset(
+    args,
+    config: RawDemoConfig,
+    camera_specs: Sequence[CameraSpec],
+    *,
+    state_names: Sequence[str],
+    action_names: Sequence[str],
+):
     LeRobotDataset = get_lerobot_dataset_cls()
     if args.root.exists():
         dataset = LeRobotDataset(
@@ -269,8 +344,8 @@ def _load_or_create_dataset(args, config: RawDemoConfig, camera_specs: Sequence[
             dataset,
             fps=config.fps,
             camera_specs=camera_specs,
-            state_names=CONVERT_STATE_NAMES,
-            action_names=CONVERT_ACTION_NAMES,
+            state_names=state_names,
+            action_names=action_names,
         )
         total_threads = max(1, args.image_writer_threads) * len(camera_specs)
         dataset.start_image_writer(
@@ -291,8 +366,8 @@ def _load_or_create_dataset(args, config: RawDemoConfig, camera_specs: Sequence[
     return create_or_resume_dataset(
         create_args,
         camera_specs,
-        state_names=CONVERT_STATE_NAMES,
-        action_names=CONVERT_ACTION_NAMES,
+        state_names=state_names,
+        action_names=action_names,
     )
 
 
@@ -301,22 +376,9 @@ def _frame_from_episode(
     index: int,
     camera_specs: Sequence[CameraSpec],
 ) -> dict[str, np.ndarray]:
-    tcp_poses = np.asarray(payload["tcp_poses"], dtype=np.float32)
-    gripper = np.asarray(payload["gripper"], dtype=np.float32)
-
     frame = {
-        "observation.state": np.concatenate(
-            [
-                tcp_poses[index].astype(np.float32, copy=False),
-                np.asarray([gripper[index]], dtype=np.float32),
-            ]
-        ),
-        "action": np.concatenate(
-            [
-                tcp_poses[index + 1].astype(np.float32, copy=False),
-                np.asarray([gripper[index + 1]], dtype=np.float32),
-            ]
-        ),
+        "observation.state": _build_state_from_payload(payload, index),
+        "action": _build_action_from_payload(payload, index),
     }
 
     for spec in camera_specs:
@@ -345,6 +407,8 @@ def run_conversion(args) -> None:
     npz_files, config = inspect_raw_demos(raw_dir)
     args.root = args.root.expanduser().resolve()
     camera_specs = _build_convert_camera_specs(config, args)
+    state_names = get_convert_state_names()
+    action_names = get_convert_action_names()
 
     existing_manifest = _load_existing_manifest(args.root) if args.root.exists() else None
     if args.root.exists() and existing_manifest is None:
@@ -360,12 +424,20 @@ def run_conversion(args) -> None:
             raw_dir=raw_dir,
             config=config,
             camera_specs=camera_specs,
+            state_names=state_names,
+            action_names=action_names,
         )
         if existing_manifest is not None
         else {}
     )
 
-    dataset = _load_or_create_dataset(args, config, camera_specs)
+    dataset = _load_or_create_dataset(
+        args,
+        config,
+        camera_specs,
+        state_names=state_names,
+        action_names=action_names,
+    )
     skipped_short: list[tuple[str, str]] = []
     saved_count = 0
 
@@ -374,7 +446,9 @@ def run_conversion(args) -> None:
         f"  原始目录: {raw_dir}\n"
         f"  输出目录: {dataset.root}\n"
         f"  fps: {config.fps}\n"
-        f"  相机: {[spec.name for spec in camera_specs]}"
+        f"  相机: {[spec.name for spec in camera_specs]}\n"
+        f"  observation.state: {state_names}\n"
+        f"  action: {action_names}"
     )
 
     VideoEncodingManager = get_video_encoding_manager_cls()
@@ -409,6 +483,8 @@ def run_conversion(args) -> None:
                     raw_dir=raw_dir,
                     config=config,
                     camera_specs=camera_specs,
+                    state_names=state_names,
+                    action_names=action_names,
                     converted_episodes=converted_episodes,
                 )
                 saved_count += 1
