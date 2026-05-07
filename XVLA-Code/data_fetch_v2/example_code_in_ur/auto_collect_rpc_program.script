@@ -1,0 +1,33 @@
+# 该脚本由 auto_collect_rpc.py 自动生成。
+# Script 节点纯顺序版本，不使用 def。
+# 示教器端只上传三类数据：
+# 1. current_gripper_pos: 夹爪角度 / 开合量
+# 2. get_actual_tcp_pose(): 六维绝对位姿 [x, y, z, rx, ry, rz]
+# 3. get_actual_joint_positions(): 六个关节相对角度
+
+global rpc_url = "http://192.168.1.100:50000/RPC2"
+global collection_active = True
+global current_gripper_pos = 100.0
+global rpc_handle = rpc_factory("xmlrpc", rpc_url)
+dh_ag95_set_activate(1)
+dh_ag95_set_force(1, 40.0)
+dh_ag95_set_speed(1, 40.0)
+sleep(0.5)
+rpc_handle.begin_episode()
+
+# 如果你在别处控制夹爪，请同步更新 current_gripper_pos
+# 例如：
+# current_gripper_pos = 20.0
+# dh_ag95_set_position(1, current_gripper_pos)
+
+while collection_active:
+  rpc_handle.push_sample(
+    get_actual_tcp_pose(),
+    get_actual_joint_positions(),
+    current_gripper_pos
+  )
+  sync()
+end
+
+rpc_handle.end_episode(1)
+rpc_handle.closeXMLRPCClientConnection()

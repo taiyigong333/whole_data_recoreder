@@ -1,0 +1,59 @@
+{
+  "robot": {
+    "ip": "192.168.1.88"
+  },
+  "rpc": {
+    "host": "0.0.0.0",
+    "port": 50000
+  },
+  "collection": {
+    "task_name": "ur7e_dh_ag_demo",
+    "instruction": "Pick up the chili on the table",
+    "sample_hz": 30.0,
+    "expected_samples": 0,
+    "operator_note": "",
+    "min_frames": 20
+  },
+  "paths": {
+    "save_dir": "./fetch_code_auto/raw_demos",
+    "training_data_dir": "./fetch_code_auto/training_data"
+  },
+  "cameras": {
+    "fps": 30,
+    "width": 640,
+    "height": 480,
+    "output_width": 256,
+    "output_height": 256,
+    "preview_enabled": true,
+    "live_view_width": 512,
+    "live_view_height": 512
+  },
+  "dashboard": {
+    "auto_start_program": false,
+    "program_name": "auto_collect_rpc.urp"
+  },
+  "ur_script": {
+    "rpc_url": "auto",
+    "sample_hz": 0.0,
+    "gripper_prefix": "dh_ag95",
+    "gripper_index": 1,
+    "activate_gripper": true,
+    "gripper_force": 40,
+    "gripper_speed": 40,
+    "gripper_open_position": 100.0,
+    "gripper_close_position": 0.0,
+    "gripper_closed_threshold": 50.0,
+    "wait_after_open_s": 0.8,
+    "wait_after_close_s": 1.0,
+    "home_q": [0.0, -1.5708, -1.5708, -1.5708, 1.5708, 0.0],
+    "pick_pre": [0.45, -0.2, 0.25, 2.22, -2.22, 0.0],
+    "pick_pose": [0.45, -0.2, 0.12, 2.22, -2.22, 0.0],
+    "place_pre": [0.3, 0.25, 0.25, 2.22, -2.22, 0.0],
+    "place_pose": [0.3, 0.25, 0.12, 2.22, -2.22, 0.0],
+    "home_acc": 1.2,
+    "home_vel": 1.0,
+    "linear_acc": 1.2,
+    "linear_fast_vel": 0.25,
+    "linear_slow_vel": 0.2
+  }
+}

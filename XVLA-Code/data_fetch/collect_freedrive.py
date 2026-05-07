@@ -63,11 +63,13 @@ def start_realsense_pipelines():
 
 
 def capture_aligned(rtde_r, pipelines):
-    """并行采集两个视角图像和位姿"""
+    """并行采集两个视角图像、位姿和关节角度"""
     pose_holder = [None]
+    q_holder = [None]
 
     def read_pose():
         pose_holder[0] = rtde_r.getActualTCPPose()
+        q_holder[0] = rtde_r.getActualQ()
 
     t = threading.Thread(target=read_pose)
     t.start()
@@ -86,9 +88,9 @@ def capture_aligned(rtde_r, pipelines):
 
     t.join()
 
-    if pose_holder[0] is None or any(f is None for f in frames):
-        return None, None, None
-    return frames[0], frames[1], pose_holder[0]
+    if pose_holder[0] is None or q_holder[0] is None or any(f is None for f in frames):
+        return None, None, None, None
+    return frames[0], frames[1], pose_holder[0], q_holder[0]
 
 
 def main():
@@ -159,14 +161,15 @@ def main():
             images_main = []
             images_wrist = []
             tcp_poses = []
+            joint_positions = []
             gripper_states = []
             frame_count = 0
 
             while frame_count < MAX_FRAMES:
                 loop_start = time.time()
 
-                # ① 并行采集：两个视角 + 位姿
-                frame_m, frame_w, tcp = capture_aligned(rtde_r, active_pipelines)
+                # ① 并行采集：两个视角 + 位姿 + 关节角度
+                frame_m, frame_w, tcp, joints = capture_aligned(rtde_r, active_pipelines)
                 if frame_m is None:
                     continue
 
@@ -175,6 +178,7 @@ def main():
                 images_main.append(cv2.resize(frame_m_rgb, (256, 256)))
                 images_wrist.append(cv2.resize(frame_w_rgb, (256, 256)))
                 tcp_poses.append(tcp)
+                joint_positions.append(joints)
 
                 # ② 记录夹爪状态
                 gripper_states.append(gripper_state)
@@ -238,6 +242,7 @@ def main():
                 images=np.array(images_main, dtype=np.uint8),
                 images_wrist=np.array(images_wrist, dtype=np.uint8),
                 tcp_poses=np.array(tcp_poses, dtype=np.float64),
+                joint_positions=np.array(joint_positions, dtype=np.float64),
                 gripper=np.array(gripper_states, dtype=np.float64),
                 instruction=TASK_NAME,
                 fps=FPS,
